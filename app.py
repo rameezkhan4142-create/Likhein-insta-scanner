@@ -8,26 +8,32 @@ from apify_client import ApifyClient
 # Page Configuration
 st.set_page_config(page_title="Instagram Influencer Keyword Scanner", page_icon="🔍", layout="wide")
 
-st.title("🔍 Instagram Influencer Keyword Scanner (Cloud Powered)")
-st.markdown("Enter influencer profile links & keywords. This uses Apify Cloud so you **never get blocked or rate-limited (429)**.")
+st.title("🔍 Instagram Influencer Keyword Scanner")
+st.markdown("Enter influencer profile links & keywords. Matching posts will be extracted automatically.")
+
+# --- CHECK FOR SECRET TOKEN ---
+secret_token = st.secrets.get("APIFY_API_TOKEN", "")
 
 # --- SIDEBAR: SETTINGS ---
-st.sidebar.header("⚙️ Settings & Filters")
+st.sidebar.header("⚙️ Search Filters")
 
-# 1. Apify API Token Input
-api_token = st.sidebar.text_input(
-    "🔑 Apify API Token:", 
-    type="password",
-    placeholder="apify_api_xxxxxxxxx"
-)
-st.sidebar.caption("👉 Get your free token from: [apify.com/account#/integrations](https://console.apify.com/account#/integrations)")
+# Agar Secret me token na mile to hi sidebar me box dikhaye
+if not secret_token:
+    api_token = st.sidebar.text_input(
+        "🔑 Apify API Token:", 
+        type="password",
+        placeholder="apify_api_xxxxxxxxx"
+    )
+else:
+    api_token = secret_token
+    st.sidebar.success("🔒 System API Connected")
 
-# 2. Date Range Selection
+# Date Range Selection
 st.sidebar.subheader("📅 Time Period")
 start_date = st.sidebar.date_input("Start Date", value=date(2026, 1, 1))
 end_date = st.sidebar.date_input("End Date", value=date(2026, 10, 31))
 
-# 3. Keywords Input
+# Keywords Input
 st.sidebar.subheader("🔑 Keywords")
 keywords_input = st.sidebar.text_area(
     "Keywords (comma ya new line se daalein):", 
@@ -55,7 +61,7 @@ if st.button("🚀 Start Scanning", type="primary"):
     raw_keywords = [k.strip().lower() for k in re.split(r'[\n,]+', keywords_input) if k.strip()]
     
     if not api_token.strip():
-        st.error("⚠️ Pehle sidebar me apna Apify API Token paste karein!")
+        st.error("⚠️ API Token configure nahi hai!")
     elif not raw_links:
         st.error("⚠️ Kam az kam ek Instagram profile link zaroor enter karein!")
     elif not raw_keywords:
@@ -65,14 +71,14 @@ if st.button("🚀 Start Scanning", type="primary"):
     else:
         usernames = [extract_username(link) for link in raw_links]
         
-        st.info(f"🚀 Cloud scanning initiated for: {', '.join(['@'+u for u in usernames])}")
+        st.info(f"🚀 Scanning initiated for: {', '.join(['@'+u for u in usernames])}")
         
         s_dt = datetime.combine(start_date, datetime.min.time())
         e_dt = datetime.combine(end_date, datetime.max.time())
         
         results = []
         
-        with st.spinner("⏳ Apify Cloud posts fetch kar raha hai... Please wait..."):
+        with st.spinner("⏳ Instagram posts fetch ho rahi hain... Please wait..."):
             try:
                 client = ApifyClient(api_token.strip())
                 
@@ -82,8 +88,6 @@ if st.button("🚀 Start Scanning", type="primary"):
                 }
                 
                 run = client.actor("apify/instagram-post-scraper").call(run_input=run_input)
-                
-                # Handling both dict and object types safely
                 dataset_id = getattr(run, "default_dataset_id", None) or (run.get("defaultDatasetId") if isinstance(run, dict) else None)
                 
                 dataset_items = list(client.dataset(dataset_id).iterate_items())
