@@ -53,9 +53,6 @@ def extract_username(profile_link):
     return profile_link.replace("@", "").replace(" ", "")
 
 def is_commercial_campaign(caption, target_brand, item):
-    """
-    Pakistani Market Optimized Commercial Detection.
-    """
     caption_lower = (caption or "").lower()
     brand_clean = target_brand.lower().replace("@", "").replace(" ", "")
     
@@ -87,30 +84,56 @@ def is_commercial_campaign(caption, target_brand, item):
 
 def extract_metrics(item):
     """
-    Extracts Likes, Comments, Views, and calculates Engagement Rate.
+    Robust metrics extraction checking multiple API keys for Reels, Views & Likes.
     """
-    likes = item.get("likesCount") or 0
-    comments = item.get("commentsCount") or 0
-    views = item.get("videoViewCount") or item.get("videoPlayCount") or 0
-    is_video = item.get("isVideo") or False
+    # 1. Likes
+    likes = (
+        item.get("likesCount") 
+        or item.get("like_count") 
+        or (item.get("edge_media_preview_like", {}).get("count") if isinstance(item.get("edge_media_preview_like"), dict) else 0)
+        or 0
+    )
     
-    post_type = "Reel/Video" if is_video else ("Carousel" if item.get("productType") == "carousel_container" else "Photo")
+    # 2. Comments
+    comments = (
+        item.get("commentsCount") 
+        or item.get("comment_count") 
+        or (item.get("edge_media_to_comment", {}).get("count") if isinstance(item.get("edge_media_to_comment"), dict) else 0)
+        or 0
+    )
     
-    # Engagement Rate calculation
+    # 3. Views / Reels Plays
+    views = (
+        item.get("videoPlayCount")
+        or item.get("playCount")
+        or item.get("videoViewCount")
+        or item.get("viewCount")
+        or item.get("video_play_count")
+        or item.get("video_view_count")
+        or 0
+    )
+    
+    is_video = item.get("isVideo") or item.get("is_video") or (views > 0)
+    post_type = "Reel / Video" if is_video else ("Carousel" if item.get("productType") == "carousel_container" else "Photo")
+    
     interactions = likes + comments
+    
     if views > 0:
         er = round((interactions / views) * 100, 2)
         er_display = f"{er}%"
-    elif likes > 0:
-        er_display = f"{interactions} ints"
+        views_display = f"{views:,}"
     else:
-        er_display = "N/A"
+        views_display = "Hidden / N/A"
+        er_display = f"{interactions:,} interactions" if interactions > 0 else "N/A"
         
+    likes_display = f"{likes:,}" if likes > 0 else ("Hidden" if is_video else "0")
+    comments_display = f"{comments:,}"
+
     return {
         "Type": post_type,
-        "Views": f"{views:,}" if views > 0 else "N/A",
-        "Likes": f"{likes:,}",
-        "Comments": f"{comments:,}",
+        "Views": views_display,
+        "Likes": likes_display,
+        "Comments": comments_display,
         "ER (%)": er_display
     }
 
@@ -126,7 +149,6 @@ with tab1:
         "Enter Brand Name or Instagram Handle:", 
         placeholder="e.g., Loreal, lorealpakistan, BYD, Master Changan, Khaadi"
     )
-    # Slider up to 1000 posts
     max_posts = st.slider("Number of recent brand posts/mentions to scan:", min_value=50, max_value=1000, value=200, step=50)
     run_brand_search = st.button("🚀 Track Brand Campaigns", type="primary")
 
