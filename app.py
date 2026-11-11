@@ -6,10 +6,10 @@ import pandas as pd
 from apify_client import ApifyClient
 
 # Page Configuration
-st.set_page_config(page_title="Instagram Influencer & Brand Campaign Tracker", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Instagram Influencer & Campaign Performance Tracker", page_icon="📊", layout="wide")
 
-st.title("📊 Instagram Influencer & Brand Campaign Tracker")
-st.markdown("Track brand campaigns, identify influencer rosters, and filter **commercial partnerships**.")
+st.title("📊 Instagram Influencer & Campaign Performance Tracker")
+st.markdown("Track brand campaigns, influencer rosters, and **performance metrics (Views, Likes, Comments, Engagement Rate %)**.")
 
 # --- CHECK FOR SECRET TOKEN SAFELY ---
 secret_token = ""
@@ -54,8 +54,7 @@ def extract_username(profile_link):
 
 def is_commercial_campaign(caption, target_brand, item):
     """
-    Pakistani Market Optimized Commercial Detection:
-    Checks for official disclosures, brand @mentions, #brand hashtags, and PR/Collab keywords.
+    Pakistani Market Optimized Commercial Detection.
     """
     caption_lower = (caption or "").lower()
     brand_clean = target_brand.lower().replace("@", "").replace(" ", "")
@@ -66,19 +65,19 @@ def is_commercial_campaign(caption, target_brand, item):
         if tag in caption_lower:
             return True, f"Official Tag: '{tag}'"
             
-    # 2. Instagram Built-in Paid Tag
+    # 2. Instagram Official Tag
     if item.get("isSponsored") or item.get("isPaidPartnership") or item.get("commercialityStatus") == "commercial":
         return True, "Instagram Official Paid Tag"
         
-    # 3. Brand Handle Mention (e.g., @lorealpakistan, @bydpakistan)
+    # 3. Brand Handle Mention
     if f"@{brand_clean}" in caption_lower or (brand_clean in caption_lower and "@" in caption_lower):
         return True, f"Brand Handle Tagged: '@{brand_clean}'"
         
-    # 4. Brand Campaign Hashtag (e.g., #lorealparis, #bydpakistan, #drivewithbyd)
+    # 4. Brand Campaign Hashtag
     if f"#{brand_clean}" in caption_lower:
         return True, f"Campaign Hashtag: '#{brand_clean}'"
         
-    # 5. Local PR / Gifting / Campaign keywords
+    # 5. Local PR / Gifting keywords
     local_pr_keywords = ["thank you @", "thanks to @", "pr package", "gifted", "courtesy of @", "code:", "discount code", "link in bio to shop"]
     for kw in local_pr_keywords:
         if kw in caption_lower:
@@ -86,26 +85,56 @@ def is_commercial_campaign(caption, target_brand, item):
             
     return False, "Organic / Personal Mention"
 
+def extract_metrics(item):
+    """
+    Extracts Likes, Comments, Views, and calculates Engagement Rate.
+    """
+    likes = item.get("likesCount") or 0
+    comments = item.get("commentsCount") or 0
+    views = item.get("videoViewCount") or item.get("videoPlayCount") or 0
+    is_video = item.get("isVideo") or False
+    
+    post_type = "Reel/Video" if is_video else ("Carousel" if item.get("productType") == "carousel_container" else "Photo")
+    
+    # Engagement Rate calculation
+    interactions = likes + comments
+    if views > 0:
+        er = round((interactions / views) * 100, 2)
+        er_display = f"{er}%"
+    elif likes > 0:
+        er_display = f"{interactions} ints"
+    else:
+        er_display = "N/A"
+        
+    return {
+        "Type": post_type,
+        "Views": f"{views:,}" if views > 0 else "N/A",
+        "Likes": f"{likes:,}",
+        "Comments": f"{comments:,}",
+        "ER (%)": er_display
+    }
+
 # --- MAIN INTERFACE: TABS ---
 tab1, tab2 = st.tabs(["🏢 Track by Brand Name", "👤 Scan Specific Influencer Profiles"])
 
 # ==========================================
-# TAB 1: TRACK BY BRAND (REVERSE SEARCH)
+# TAB 1: TRACK BY BRAND
 # ==========================================
 with tab1:
-    st.subheader("Discover All Influencers Who Ran Campaigns for a Brand")
+    st.subheader("Discover All Influencers & Performance for a Brand")
     brand_input = st.text_input(
         "Enter Brand Name or Instagram Handle:", 
         placeholder="e.g., Loreal, lorealpakistan, BYD, Master Changan, Khaadi"
     )
-    max_posts = st.slider("Number of recent brand posts/mentions to scan:", min_value=20, max_value=150, value=50, step=10)
+    # Slider up to 1000 posts
+    max_posts = st.slider("Number of recent brand posts/mentions to scan:", min_value=50, max_value=1000, value=200, step=50)
     run_brand_search = st.button("🚀 Track Brand Campaigns", type="primary")
 
 # ==========================================
 # TAB 2: SPECIFIC PROFILES SCANNER
 # ==========================================
 with tab2:
-    st.subheader("Check Specific Influencer Profiles for Keywords")
+    st.subheader("Check Specific Influencer Profiles with Performance Metrics")
     links_input = st.text_area(
         "Paste Influencer Profile Links (One per line or comma-separated):",
         height=120,
@@ -115,6 +144,7 @@ with tab2:
         "Keywords / Brand to search in captions (comma-separated):", 
         placeholder="byd, changan, loreal, car, ev"
     )
+    profile_posts_limit = st.slider("Posts to scan per profile:", min_value=20, max_value=500, value=50, step=10)
     run_profile_search = st.button("🔍 Scan Influencer Profiles", type="primary")
 
 # ==========================================
@@ -133,10 +163,10 @@ if run_brand_search:
         st.error("⚠️ Start Date cannot be later than End Date.")
     else:
         brand_handle = extract_username(brand_input)
-        st.info(f"🚀 Scanning campaign footprint for brand: **@{brand_handle}**...")
+        st.info(f"🚀 Scanning up to {max_posts} posts for: **@{brand_handle}**...")
         
         results = []
-        with st.spinner("⏳ Fetching brand mentions & posts via Apify Cloud... Please wait..."):
+        with st.spinner(f"⏳ Apify Cloud is analyzing posts & metrics for @{brand_handle}..."):
             try:
                 client = ApifyClient(api_token.strip())
                 run_input = {"username": [brand_handle], "resultsLimit": max_posts}
@@ -167,9 +197,16 @@ if run_brand_search:
                     if only_paid and not is_commercial:
                         continue
                         
+                    metrics = extract_metrics(item)
+                    
                     results.append({
                         "Influencer / Creator": f"@{owner}",
                         "Date": post_date.strftime("%Y-%m-%d"),
+                        "Format": metrics["Type"],
+                        "Views": metrics["Views"],
+                        "Likes": metrics["Likes"],
+                        "Comments": metrics["Comments"],
+                        "ER (%)": metrics["ER (%)"],
                         "Campaign Status": "Commercial / Sponsored" if is_commercial else "Organic Mention",
                         "Evidence": evidence,
                         "Post Link": post_url,
@@ -184,7 +221,7 @@ if run_brand_search:
             st.success(f"🎉 Found **{len(results)}** campaign posts for **@{brand_handle}**!")
             st.dataframe(df, column_config={"Post Link": st.column_config.LinkColumn("Post Link")}, use_container_width=True)
             csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Campaign Report as CSV", csv, f"{brand_handle}_report.csv", "text/csv")
+            st.download_button("📥 Download Performance Report as CSV (Excel)", csv, f"{brand_handle}_performance_report.csv", "text/csv")
         else:
             st.warning(f"❌ No matching campaign posts found for @{brand_handle} within the selected dates.")
 
@@ -203,13 +240,13 @@ if run_profile_search:
         st.error("⚠️ Start Date cannot be later than End Date.")
     else:
         usernames = [extract_username(link) for link in raw_links]
-        st.info(f"🚀 Scanning {len(usernames)} profiles for keywords...")
+        st.info(f"🚀 Scanning {len(usernames)} profiles for keywords & engagement...")
         
         results = []
-        with st.spinner("⏳ Scanning profiles via Apify Cloud... Please wait..."):
+        with st.spinner("⏳ Fetching profiles & engagement metrics..."):
             try:
                 client = ApifyClient(api_token.strip())
-                run_input = {"username": usernames, "resultsLimit": 30}
+                run_input = {"username": usernames, "resultsLimit": profile_posts_limit}
                 
                 run = client.actor("apify/instagram-post-scraper").call(run_input=run_input)
                 dataset_id = getattr(run, "default_dataset_id", None) or (run.get("defaultDatasetId") if isinstance(run, dict) else None)
@@ -242,13 +279,19 @@ if run_profile_search:
                         continue
                         
                     is_commercial, evidence = is_commercial_campaign(caption, matched_kw, item)
-                    
                     if only_paid and not is_commercial:
                         continue
                         
+                    metrics = extract_metrics(item)
+                    
                     results.append({
                         "Influencer": f"@{owner}",
                         "Date": post_date.strftime("%Y-%m-%d"),
+                        "Format": metrics["Type"],
+                        "Views": metrics["Views"],
+                        "Likes": metrics["Likes"],
+                        "Comments": metrics["Comments"],
+                        "ER (%)": metrics["ER (%)"],
                         "Matched Keyword": matched_kw,
                         "Campaign Status": "Commercial / Sponsored" if is_commercial else "Organic Mention",
                         "Evidence": evidence,
@@ -260,9 +303,9 @@ if run_profile_search:
 
         if results:
             df = pd.DataFrame(results)
-            st.success(f"🎉 Found **{len(results)}** matching posts!")
+            st.success(f"🎉 Found **{len(results)}** matching posts with full metrics!")
             st.dataframe(df, column_config={"Post Link": st.column_config.LinkColumn("Post Link")}, use_container_width=True)
             csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Results as CSV", csv, f"influencer_results_{date.today()}.csv", "text/csv")
+            st.download_button("📥 Download Results as CSV", csv, f"influencer_metrics_{date.today()}.csv", "text/csv")
         else:
             st.warning("❌ No matching posts found matching your criteria.")
