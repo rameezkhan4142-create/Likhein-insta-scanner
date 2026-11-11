@@ -6,90 +6,138 @@ import pandas as pd
 from apify_client import ApifyClient
 
 # Page Configuration
-st.set_page_config(page_title="Instagram Influencer Keyword Scanner", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="Instagram Influencer & Brand Campaign Tracker", page_icon="📊", layout="wide")
 
-st.title("🔍 Instagram Influencer Keyword Scanner")
-st.markdown("Enter influencer profile links & keywords. Matching posts will be extracted automatically.")
+st.title("📊 Instagram Influencer & Brand Campaign Tracker")
+st.markdown("Track brand campaigns, identify influencer rosters, and filter **strictly paid/sponsored partnerships**.")
 
-# --- CHECK FOR SECRET TOKEN ---
-secret_token = st.secrets.get("APIFY_API_TOKEN", "")
+# --- CHECK FOR SECRET TOKEN SAFELY ---
+secret_token = ""
+try:
+    if "APIFY_API_TOKEN" in st.secrets:
+        secret_token = st.secrets["APIFY_API_TOKEN"]
+except Exception:
+    secret_token = ""
 
-# --- SIDEBAR: SETTINGS ---
-st.sidebar.header("⚙️ Search Filters")
+# --- SIDEBAR: SETTINGS & FILTERS ---
+st.sidebar.header("⚙️ Settings & Filters")
 
-# Agar Secret me token na mile to hi sidebar me box dikhaye
+# Token Handling
 if not secret_token:
     api_token = st.sidebar.text_input(
         "🔑 Apify API Token:", 
         type="password",
         placeholder="apify_api_xxxxxxxxx"
     )
+    st.sidebar.caption("👉 Get your API token: [apify.com](https://console.apify.com/account#/integrations)")
 else:
     api_token = secret_token
     st.sidebar.success("🔒 System API Connected")
 
-# Date Range Selection
+# Time Period
 st.sidebar.subheader("📅 Time Period")
 start_date = st.sidebar.date_input("Start Date", value=date(2026, 1, 1))
 end_date = st.sidebar.date_input("End Date", value=date(2026, 10, 31))
 
-# Keywords Input
-st.sidebar.subheader("🔑 Keywords")
-keywords_input = st.sidebar.text_area(
-    "Keywords (comma ya new line se daalein):", 
-    placeholder="Master Changan, car, byd"
-)
+# Paid Filter Toggle
+st.sidebar.subheader("🎯 Campaign Type")
+only_paid = st.sidebar.checkbox("Strictly Paid / Sponsored Campaigns Only", value=True)
+st.sidebar.caption("Filters out organic UGC, casual mentions, and personal reviews.")
 
-# --- MAIN AREA: PROFILE LINKS ---
-st.subheader("📋 Influencer Profile Links")
-links_input = st.text_area(
-    "Instagram profile links paste karein (Har link ek nayi line me ya comma se alag karein):",
-    height=150,
-    placeholder="https://www.instagram.com/irfanjunejo/\nhttps://www.instagram.com/minoqtopus/"
-)
-
+# Helper Functions
 def extract_username(profile_link):
     profile_link = profile_link.strip().rstrip('/')
     match = re.search(r"instagram\.com/([a-zA-Z0-9_\.]+)", profile_link)
     if match:
         return match.group(1)
-    return profile_link.replace("@", "")
+    return profile_link.replace("@", "").replace(" ", "")
 
-# --- ACTION BUTTON ---
-if st.button("🚀 Start Scanning", type="primary"):
-    raw_links = [l.strip() for l in re.split(r'[\n,]+', links_input) if l.strip()]
-    raw_keywords = [k.strip().lower() for k in re.split(r'[\n,]+', keywords_input) if k.strip()]
+def is_paid_post(caption, item):
+    """
+    Checks if a post is a paid/commercial campaign using multiple indicators.
+    """
+    caption_lower = (caption or "").lower()
     
+    # Common paid disclosure hashtags & keywords
+    paid_keywords = [
+        "#ad", "#sponsored", "#collab", "#paidpartnership", 
+        "#incollaborationwith", "#brandpartner", "paid partnership",
+        "partnership with", "sponsored by", "#promoted"
+    ]
+    
+    for pk in paid_keywords:
+        if pk in caption_lower:
+            return True, f"Found keyword '{pk}'"
+            
+    # Check official Instagram paid tags if available in metadata
+    if item.get("isSponsored") or item.get("isPaidPartnership") or item.get("commercialityStatus") == "commercial":
+        return True, "Instagram Official Paid Tag"
+        
+    return False, "Organic / Unverified"
+
+# --- MAIN INTERFACE: TABS ---
+tab1, tab2 = st.tabs(["🏢 Track by Brand Name", "👤 Scan Specific Influencer Profiles"])
+
+# ==========================================
+# TAB 1: TRACK BY BRAND (REVERSE SEARCH)
+# ==========================================
+with tab1:
+    st.subheader("Discover All Influencers Who Ran Campaigns for a Brand")
+    brand_input = st.text_input(
+        "Enter Brand Name or Instagram Handle:", 
+        placeholder="e.g., Loreal, lorealpakistan, BYD, Master Changan, Khaadi"
+    )
+    max_posts = st.slider("Number of recent brand posts/mentions to scan:", min_value=20, max_value=150, value=50, step=10)
+    
+    run_brand_search = st.button("🚀 Track Brand Campaigns", type="primary")
+
+# ==========================================
+# TAB 2: SPECIFIC PROFILES SCANNER
+# ==========================================
+with tab2:
+    st.subheader("Check Specific Influencer Profiles for Keywords")
+    links_input = st.text_area(
+        "Paste Influencer Profile Links (One per line or comma-separated):",
+        height=120,
+        placeholder="https://www.instagram.com/irfanjunejo/\nhttps://www.instagram.com/minoqtopus/"
+    )
+    keywords_input = st.text_area(
+        "Keywords to search in captions (comma-separated):", 
+        placeholder="car, ev, electric, skincare"
+    )
+    
+    run_profile_search = st.button("🔍 Scan Influencer Profiles", type="primary")
+
+# ==========================================
+# EXECUTION LOGIC
+# ==========================================
+s_dt = datetime.combine(start_date, datetime.min.time())
+e_dt = datetime.combine(end_date, datetime.max.time())
+
+# --- RUN TAB 1 ---
+if run_brand_search:
     if not api_token.strip():
-        st.error("⚠️ API Token configure nahi hai!")
-    elif not raw_links:
-        st.error("⚠️ Kam az kam ek Instagram profile link zaroor enter karein!")
-    elif not raw_keywords:
-        st.error("⚠️ Kam az kam ek keyword zaroor enter karein!")
+        st.error("⚠️ API Token is not configured. Please enter it in the sidebar.")
+    elif not brand_input.strip():
+        st.error("⚠️ Please enter a brand name or handle.")
     elif start_date > end_date:
-        st.error("⚠️ Start Date, End Date se baad ki nahi ho sakti!")
+        st.error("⚠️ Start Date cannot be later than End Date.")
     else:
-        usernames = [extract_username(link) for link in raw_links]
-        
-        st.info(f"🚀 Scanning initiated for: {', '.join(['@'+u for u in usernames])}")
-        
-        s_dt = datetime.combine(start_date, datetime.min.time())
-        e_dt = datetime.combine(end_date, datetime.max.time())
+        brand_handle = extract_username(brand_input)
+        st.info(f"🚀 Scanning campaign footprint for brand: **@{brand_handle}**...")
         
         results = []
-        
-        with st.spinner("⏳ Instagram posts fetch ho rahi hain... Please wait..."):
+        with st.spinner("⏳ Fetching brand mentions & posts via Apify Cloud... Please wait..."):
             try:
                 client = ApifyClient(api_token.strip())
                 
                 run_input = {
-                    "username": usernames,
-                    "resultsLimit": 30
+                    "username": [brand_handle],
+                    "resultsLimit": max_posts
                 }
                 
                 run = client.actor("apify/instagram-post-scraper").call(run_input=run_input)
                 dataset_id = getattr(run, "default_dataset_id", None) or (run.get("defaultDatasetId") if isinstance(run, dict) else None)
-                
                 dataset_items = list(client.dataset(dataset_id).iterate_items())
                 
                 for item in dataset_items:
@@ -105,43 +153,125 @@ if st.button("🚀 Start Scanning", type="primary"):
                     if post_date > e_dt or post_date < s_dt:
                         continue
                         
-                    caption = (item.get("caption") or "").lower()
-                    post_url = item.get("url") or f"https://www.instagram.com/p/{item.get('shortCode')}/"
+                    caption = item.get("caption") or ""
                     owner = item.get("ownerUsername") or "Unknown"
+                    post_url = item.get("url") or f"https://www.instagram.com/p/{item.get('shortCode')}/"
                     
-                    for kw in raw_keywords:
-                        if kw in caption:
-                            results.append({
-                                "Influencer": f"@{owner}",
-                                "Date": post_date.strftime("%Y-%m-%d"),
-                                "Matched Keyword": kw,
-                                "Post Link": post_url,
-                                "Caption Preview": (item.get("caption")[:120] + "...") if item.get("caption") and len(item.get("caption")) > 120 else (item.get("caption") or "No Caption")
-                            })
-                            break
-                            
+                    is_paid, evidence = is_paid_post(caption, item)
+                    
+                    if only_paid and not is_paid:
+                        continue
+                        
+                    results.append({
+                        "Influencer / Creator": f"@{owner}",
+                        "Date": post_date.strftime("%Y-%m-%d"),
+                        "Campaign Type": "Paid / Sponsored" if is_paid else "Organic",
+                        "Evidence": evidence,
+                        "Post Link": post_url,
+                        "Caption Preview": (caption[:120] + "...") if len(caption) > 120 else caption
+                    })
+                    
             except Exception as e:
-                st.error(f"❌ Error during scanning: {e}")
+                st.error(f"❌ Error during search: {e}")
 
-        # --- DISPLAY RESULTS ---
+        # Display Results
         if results:
             df = pd.DataFrame(results)
-            st.success(f"🎉 Total **{len(results)}** matching posts mili hain!")
+            st.success(f"🎉 Found **{len(results)}** campaign posts for **@{brand_handle}**!")
             
             st.dataframe(
                 df,
-                column_config={
-                    "Post Link": st.column_config.LinkColumn("Post Link")
-                },
+                column_config={"Post Link": st.column_config.LinkColumn("Post Link")},
                 use_container_width=True
             )
             
             csv = df.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="📥 Download Results as CSV (Excel)",
+                label="📥 Download Campaign Report as CSV (Excel)",
                 data=csv,
-                file_name=f"instagram_results_{date.today()}.csv",
+                file_name=f"{brand_handle}_campaign_report_{date.today()}.csv",
                 mime="text/csv"
             )
         else:
-            st.warning("❌ Diye gaye time period aur keywords ke mutabiq koi post nahi mili.")
+            st.warning(f"❌ No matching campaign posts found for @{brand_handle} within the selected time period.")
+
+# --- RUN TAB 2 ---
+if run_profile_search:
+    raw_links = [l.strip() for l in re.split(r'[\n,]+', links_input) if l.strip()]
+    raw_keywords = [k.strip().lower() for k in re.split(r'[\n,]+', keywords_input) if k.strip()]
+    
+    if not api_token.strip():
+        st.error("⚠️ API Token is not configured. Please enter it in the sidebar.")
+    elif not raw_links:
+        st.error("⚠️ Please enter at least one influencer profile link.")
+    elif not raw_keywords:
+        st.error("⚠️ Please enter at least one keyword.")
+    elif start_date > end_date:
+        st.error("⚠️ Start Date cannot be later than End Date.")
+    else:
+        usernames = [extract_username(link) for link in raw_links]
+        st.info(f"🚀 Scanning {len(usernames)} profiles for keywords...")
+        
+        results = []
+        with st.spinner("⏳ Scanning profiles via Apify Cloud... Please wait..."):
+            try:
+                client = ApifyClient(api_token.strip())
+                run_input = {"username": usernames, "resultsLimit": 30}
+                
+                run = client.actor("apify/instagram-post-scraper").call(run_input=run_input)
+                dataset_id = getattr(run, "default_dataset_id", None) or (run.get("defaultDatasetId") if isinstance(run, dict) else None)
+                dataset_items = list(client.dataset(dataset_id).iterate_items())
+                
+                for item in dataset_items:
+                    post_timestamp = item.get("timestamp")
+                    if not post_timestamp:
+                        continue
+                    if isinstance(post_timestamp, str):
+                        post_date = datetime.fromisoformat(post_timestamp.replace("Z", "+00:00")).replace(tzinfo=None)
+                    else:
+                        post_date = datetime.utcfromtimestamp(post_timestamp)
+                        
+                    if post_date > e_dt or post_date < s_dt:
+                        continue
+                        
+                    caption = (item.get("caption") or "")
+                    caption_lower = caption.lower()
+                    owner = item.get("ownerUsername") or "Unknown"
+                    post_url = item.get("url") or f"https://www.instagram.com/p/{item.get('shortCode')}/"
+                    
+                    is_paid, evidence = is_paid_post(caption, item)
+                    if only_paid and not is_paid:
+                        continue
+                        
+                    for kw in raw_keywords:
+                        if kw in caption_lower:
+                            results.append({
+                                "Influencer": f"@{owner}",
+                                "Date": post_date.strftime("%Y-%m-%d"),
+                                "Matched Keyword": kw,
+                                "Campaign Type": "Paid / Sponsored" if is_paid else "Organic",
+                                "Evidence": evidence,
+                                "Post Link": post_url,
+                                "Caption Preview": (caption[:120] + "...") if len(caption) > 120 else caption
+                            })
+                            break
+            except Exception as e:
+                st.error(f"❌ Error during scanning: {e}")
+
+        if results:
+            df = pd.DataFrame(results)
+            st.success(f"🎉 Found **{len(results)}** matching posts!")
+            st.dataframe(
+                df,
+                column_config={"Post Link": st.column_config.LinkColumn("Post Link")},
+                use_container_width=True
+            )
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Results as CSV",
+                data=csv,
+                file_name=f"influencer_results_{date.today()}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("❌ No matching posts found matching your criteria.")
