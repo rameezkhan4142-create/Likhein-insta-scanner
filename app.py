@@ -9,7 +9,7 @@ from apify_client import ApifyClient
 st.set_page_config(page_title="Instagram Influencer & Brand Campaign Tracker", page_icon="📊", layout="wide")
 
 st.title("📊 Instagram Influencer & Brand Campaign Tracker")
-st.markdown("Track brand campaigns, identify influencer rosters, and filter **strictly paid/sponsored partnerships**.")
+st.markdown("Track brand campaigns, identify influencer rosters, and filter **commercial partnerships**.")
 
 # --- CHECK FOR SECRET TOKEN SAFELY ---
 secret_token = ""
@@ -39,10 +39,10 @@ st.sidebar.subheader("📅 Time Period")
 start_date = st.sidebar.date_input("Start Date", value=date(2026, 1, 1))
 end_date = st.sidebar.date_input("End Date", value=date(2026, 10, 31))
 
-# Paid Filter Toggle
+# Paid Filter Toggle (Pakistani Market Optimized)
 st.sidebar.subheader("🎯 Campaign Type")
-only_paid = st.sidebar.checkbox("Strictly Paid / Sponsored Campaigns Only", value=True)
-st.sidebar.caption("Filters out organic UGC, casual mentions, and personal reviews.")
+only_paid = st.sidebar.checkbox("Strictly Commercial / Sponsored Campaigns Only", value=True)
+st.sidebar.caption("Detects @mentions, campaign hashtags (#brand), PR tags, and official disclosures.")
 
 # Helper Functions
 def extract_username(profile_link):
@@ -52,28 +52,39 @@ def extract_username(profile_link):
         return match.group(1)
     return profile_link.replace("@", "").replace(" ", "")
 
-def is_paid_post(caption, item):
+def is_commercial_campaign(caption, target_brand, item):
     """
-    Checks if a post is a paid/commercial campaign using multiple indicators.
+    Pakistani Market Optimized Commercial Detection:
+    Checks for official disclosures, brand @mentions, #brand hashtags, and PR/Collab keywords.
     """
     caption_lower = (caption or "").lower()
+    brand_clean = target_brand.lower().replace("@", "").replace(" ", "")
     
-    # Common paid disclosure hashtags & keywords
-    paid_keywords = [
-        "#ad", "#sponsored", "#collab", "#paidpartnership", 
-        "#incollaborationwith", "#brandpartner", "paid partnership",
-        "partnership with", "sponsored by", "#promoted"
-    ]
-    
-    for pk in paid_keywords:
-        if pk in caption_lower:
-            return True, f"Found keyword '{pk}'"
+    # 1. Standard Disclosures
+    standard_tags = ["#ad", "#sponsored", "#collab", "#paidpartnership", "#incollaborationwith", "#brandpartner", "paid partnership"]
+    for tag in standard_tags:
+        if tag in caption_lower:
+            return True, f"Official Tag: '{tag}'"
             
-    # Check official Instagram paid tags if available in metadata
+    # 2. Instagram Built-in Paid Tag
     if item.get("isSponsored") or item.get("isPaidPartnership") or item.get("commercialityStatus") == "commercial":
         return True, "Instagram Official Paid Tag"
         
-    return False, "Organic / Unverified"
+    # 3. Brand Handle Mention (e.g., @lorealpakistan, @bydpakistan)
+    if f"@{brand_clean}" in caption_lower or (brand_clean in caption_lower and "@" in caption_lower):
+        return True, f"Brand Handle Tagged: '@{brand_clean}'"
+        
+    # 4. Brand Campaign Hashtag (e.g., #lorealparis, #bydpakistan, #drivewithbyd)
+    if f"#{brand_clean}" in caption_lower:
+        return True, f"Campaign Hashtag: '#{brand_clean}'"
+        
+    # 5. Local PR / Gifting / Campaign keywords
+    local_pr_keywords = ["thank you @", "thanks to @", "pr package", "gifted", "courtesy of @", "code:", "discount code", "link in bio to shop"]
+    for kw in local_pr_keywords:
+        if kw in caption_lower:
+            return True, f"Commercial Indicator: '{kw}'"
+            
+    return False, "Organic / Personal Mention"
 
 # --- MAIN INTERFACE: TABS ---
 tab1, tab2 = st.tabs(["🏢 Track by Brand Name", "👤 Scan Specific Influencer Profiles"])
@@ -88,7 +99,6 @@ with tab1:
         placeholder="e.g., Loreal, lorealpakistan, BYD, Master Changan, Khaadi"
     )
     max_posts = st.slider("Number of recent brand posts/mentions to scan:", min_value=20, max_value=150, value=50, step=10)
-    
     run_brand_search = st.button("🚀 Track Brand Campaigns", type="primary")
 
 # ==========================================
@@ -102,10 +112,9 @@ with tab2:
         placeholder="https://www.instagram.com/irfanjunejo/\nhttps://www.instagram.com/minoqtopus/"
     )
     keywords_input = st.text_area(
-        "Keywords to search in captions (comma-separated):", 
-        placeholder="car, ev, electric, skincare"
+        "Keywords / Brand to search in captions (comma-separated):", 
+        placeholder="byd, changan, loreal, car, ev"
     )
-    
     run_profile_search = st.button("🔍 Scan Influencer Profiles", type="primary")
 
 # ==========================================
@@ -130,11 +139,7 @@ if run_brand_search:
         with st.spinner("⏳ Fetching brand mentions & posts via Apify Cloud... Please wait..."):
             try:
                 client = ApifyClient(api_token.strip())
-                
-                run_input = {
-                    "username": [brand_handle],
-                    "resultsLimit": max_posts
-                }
+                run_input = {"username": [brand_handle], "resultsLimit": max_posts}
                 
                 run = client.actor("apify/instagram-post-scraper").call(run_input=run_input)
                 dataset_id = getattr(run, "default_dataset_id", None) or (run.get("defaultDatasetId") if isinstance(run, dict) else None)
@@ -157,15 +162,15 @@ if run_brand_search:
                     owner = item.get("ownerUsername") or "Unknown"
                     post_url = item.get("url") or f"https://www.instagram.com/p/{item.get('shortCode')}/"
                     
-                    is_paid, evidence = is_paid_post(caption, item)
+                    is_commercial, evidence = is_commercial_campaign(caption, brand_handle, item)
                     
-                    if only_paid and not is_paid:
+                    if only_paid and not is_commercial:
                         continue
                         
                     results.append({
                         "Influencer / Creator": f"@{owner}",
                         "Date": post_date.strftime("%Y-%m-%d"),
-                        "Campaign Type": "Paid / Sponsored" if is_paid else "Organic",
+                        "Campaign Status": "Commercial / Sponsored" if is_commercial else "Organic Mention",
                         "Evidence": evidence,
                         "Post Link": post_url,
                         "Caption Preview": (caption[:120] + "...") if len(caption) > 120 else caption
@@ -174,26 +179,14 @@ if run_brand_search:
             except Exception as e:
                 st.error(f"❌ Error during search: {e}")
 
-        # Display Results
         if results:
             df = pd.DataFrame(results)
             st.success(f"🎉 Found **{len(results)}** campaign posts for **@{brand_handle}**!")
-            
-            st.dataframe(
-                df,
-                column_config={"Post Link": st.column_config.LinkColumn("Post Link")},
-                use_container_width=True
-            )
-            
+            st.dataframe(df, column_config={"Post Link": st.column_config.LinkColumn("Post Link")}, use_container_width=True)
             csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Campaign Report as CSV (Excel)",
-                data=csv,
-                file_name=f"{brand_handle}_campaign_report_{date.today()}.csv",
-                mime="text/csv"
-            )
+            st.download_button("📥 Download Campaign Report as CSV", csv, f"{brand_handle}_report.csv", "text/csv")
         else:
-            st.warning(f"❌ No matching campaign posts found for @{brand_handle} within the selected time period.")
+            st.warning(f"❌ No matching campaign posts found for @{brand_handle} within the selected dates.")
 
 # --- RUN TAB 2 ---
 if run_profile_search:
@@ -234,44 +227,42 @@ if run_profile_search:
                     if post_date > e_dt or post_date < s_dt:
                         continue
                         
-                    caption = (item.get("caption") or "")
+                    caption = item.get("caption") or ""
                     caption_lower = caption.lower()
                     owner = item.get("ownerUsername") or "Unknown"
                     post_url = item.get("url") or f"https://www.instagram.com/p/{item.get('shortCode')}/"
                     
-                    is_paid, evidence = is_paid_post(caption, item)
-                    if only_paid and not is_paid:
-                        continue
-                        
+                    matched_kw = None
                     for kw in raw_keywords:
                         if kw in caption_lower:
-                            results.append({
-                                "Influencer": f"@{owner}",
-                                "Date": post_date.strftime("%Y-%m-%d"),
-                                "Matched Keyword": kw,
-                                "Campaign Type": "Paid / Sponsored" if is_paid else "Organic",
-                                "Evidence": evidence,
-                                "Post Link": post_url,
-                                "Caption Preview": (caption[:120] + "...") if len(caption) > 120 else caption
-                            })
+                            matched_kw = kw
                             break
+                            
+                    if not matched_kw:
+                        continue
+                        
+                    is_commercial, evidence = is_commercial_campaign(caption, matched_kw, item)
+                    
+                    if only_paid and not is_commercial:
+                        continue
+                        
+                    results.append({
+                        "Influencer": f"@{owner}",
+                        "Date": post_date.strftime("%Y-%m-%d"),
+                        "Matched Keyword": matched_kw,
+                        "Campaign Status": "Commercial / Sponsored" if is_commercial else "Organic Mention",
+                        "Evidence": evidence,
+                        "Post Link": post_url,
+                        "Caption Preview": (caption[:120] + "...") if len(caption) > 120 else caption
+                    })
             except Exception as e:
                 st.error(f"❌ Error during scanning: {e}")
 
         if results:
             df = pd.DataFrame(results)
             st.success(f"🎉 Found **{len(results)}** matching posts!")
-            st.dataframe(
-                df,
-                column_config={"Post Link": st.column_config.LinkColumn("Post Link")},
-                use_container_width=True
-            )
+            st.dataframe(df, column_config={"Post Link": st.column_config.LinkColumn("Post Link")}, use_container_width=True)
             csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Results as CSV",
-                data=csv,
-                file_name=f"influencer_results_{date.today()}.csv",
-                mime="text/csv"
-            )
+            st.download_button("📥 Download Results as CSV", csv, f"influencer_results_{date.today()}.csv", "text/csv")
         else:
             st.warning("❌ No matching posts found matching your criteria.")
